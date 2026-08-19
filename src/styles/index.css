@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+/* Clinical-friendly color tweaks (can be adjusted) */
+.bg-clinic-blue { background-color: #0f172a; }
+.text-clinic-muted { color: #475569; }
