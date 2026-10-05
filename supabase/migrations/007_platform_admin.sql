@@ -148,7 +148,7 @@ create policy tenants_read_scope on public.tenants
     or exists (
       select 1 from public.profiles p
       where p.id = auth.uid()
-        and p.tenant_id = id
+        and p.tenant_id = public.tenants.id
         and p.is_active
         and p.role::text not in ('platform_owner')
     )
