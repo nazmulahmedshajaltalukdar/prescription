@@ -14,15 +14,7 @@ create table if not exists public.medicine_catalog (
   source_revision text not null,
   verified_at date not null,
   is_active boolean not null default true,
-  search_vector tsvector generated always as (
-    to_tsvector(
-      'simple',
-      coalesce(catalog_code, '') || ' ' || coalesce(generic_name, '') || ' ' ||
-      coalesce(brand_name, '') || ' ' || coalesce(strength, '') || ' ' ||
-      coalesce(dosage_form, '') || ' ' || coalesce(manufacturer, '') || ' ' ||
-      coalesce(registration_no, '') || ' ' || coalesce(array_to_string(search_terms, ' '), '')
-    )
-  ) stored,
+  search_vector tsvector not null default ''::tsvector,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -47,14 +39,7 @@ create table if not exists public.clinical_reference_terms (
   source_revision text not null,
   verified_at date not null,
   is_active boolean not null default true,
-  search_vector tsvector generated always as (
-    to_tsvector(
-      'simple',
-      coalesce(code, '') || ' ' || coalesce(label_en, '') || ' ' ||
-      coalesce(label_bn, '') || ' ' || coalesce(array_to_string(synonyms, ' '), '') || ' ' ||
-      coalesce(classification_system, '') || ' ' || coalesce(classification_code, '')
-    )
-  ) stored,
+  search_vector tsvector not null default ''::tsvector,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -63,6 +48,55 @@ create index if not exists clinical_reference_terms_search_idx
   on public.clinical_reference_terms using gin (search_vector);
 create index if not exists clinical_reference_terms_category_idx
   on public.clinical_reference_terms (category, is_active);
+
+create or replace function public.refresh_medicine_catalog_search_vector()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  new.search_vector := to_tsvector(
+    'simple'::regconfig,
+    coalesce(new.catalog_code, '') || ' ' || coalesce(new.generic_name, '') || ' ' ||
+    coalesce(new.brand_name, '') || ' ' || coalesce(new.strength, '') || ' ' ||
+    coalesce(new.dosage_form, '') || ' ' || coalesce(new.manufacturer, '') || ' ' ||
+    coalesce(new.registration_no, '') || ' ' || coalesce(array_to_string(new.search_terms, ' '), '')
+  );
+  return new;
+end;
+$$;
+
+create or replace function public.refresh_clinical_reference_search_vector()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  new.search_vector := to_tsvector(
+    'simple'::regconfig,
+    coalesce(new.code, '') || ' ' || coalesce(new.label_en, '') || ' ' ||
+    coalesce(new.label_bn, '') || ' ' || coalesce(array_to_string(new.synonyms, ' '), '') || ' ' ||
+    coalesce(new.classification_system, '') || ' ' || coalesce(new.classification_code, '')
+  );
+  return new;
+end;
+$$;
+
+revoke all on function public.refresh_medicine_catalog_search_vector() from public, anon, authenticated;
+revoke all on function public.refresh_clinical_reference_search_vector() from public, anon, authenticated;
+
+drop trigger if exists medicine_catalog_refresh_search_vector on public.medicine_catalog;
+create trigger medicine_catalog_refresh_search_vector
+  before insert or update on public.medicine_catalog
+  for each row execute function public.refresh_medicine_catalog_search_vector();
+
+drop trigger if exists clinical_reference_terms_refresh_search_vector on public.clinical_reference_terms;
+create trigger clinical_reference_terms_refresh_search_vector
+  before insert or update on public.clinical_reference_terms
+  for each row execute function public.refresh_clinical_reference_search_vector();
+
+update public.medicine_catalog set search_vector = ''::tsvector;
+update public.clinical_reference_terms set search_vector = ''::tsvector;
 
 create table if not exists public.clinic_prescription_templates (
   id uuid primary key default gen_random_uuid(),
