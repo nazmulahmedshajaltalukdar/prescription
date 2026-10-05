@@ -18,6 +18,7 @@ const PharmacyPage = lazy(() => import('./pages/PharmacyPage'))
 const PatientCrmPage = lazy(() => import('./pages/PatientCrmPage'))
 const CalendarPage = lazy(() => import('./pages/CalendarPage'))
 const AppointmentInboxPage = lazy(() => import('./pages/AppointmentInboxPage'))
+const ClinicalCatalogPage = lazy(() => import('./pages/ClinicalCatalogPage'))
 const SerialQueuePage = lazy(() => import('./pages/SerialQueuePage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
@@ -46,6 +47,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="patients/new" element={loadPage(<PatientRegistration />)} />
             <Route path="calendar" element={loadPage(<CalendarPage />)} />
             <Route path="appointments" element={loadPage(<AppointmentInboxPage />)} />
+            <Route path="catalog" element={loadPage(<ClinicalCatalogPage />)} />
             <Route path="queue" element={loadPage(<SerialQueuePage />)} />
             <Route path="prescription" element={loadPage(<PrescriptionEditor />)} />
             <Route path="prescriptions" element={loadPage(<PrescriptionsList />)} />

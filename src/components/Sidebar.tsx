@@ -1,5 +1,5 @@
 import React from 'react'
-import { Home, Clipboard, FileText, Users, ShieldCheck, CalendarDays, ListOrdered, Settings, UserCircle2, Wallet, FlaskConical, Sparkles, Inbox, X } from 'lucide-react'
+import { Home, Clipboard, FileText, Users, ShieldCheck, CalendarDays, ListOrdered, Settings, UserCircle2, Wallet, FlaskConical, Sparkles, Inbox, X, BookOpen } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../services/auth'
 import { isTenantModuleEnabled } from '../services/adminManagement'
@@ -8,6 +8,7 @@ const items = [
   { label: 'Dashboard', to: '/', icon: Home },
   { label: 'Patients', to: '/patients', icon: Users },
   { label: 'Appointments', to: '/appointments', icon: Inbox },
+  { label: 'Clinical catalog', to: '/catalog', icon: BookOpen },
   { label: 'Calendar', to: '/calendar', icon: CalendarDays },
   { label: 'Serial queue', to: '/queue', icon: ListOrdered },
   { label: 'Prescription', to: '/prescription', icon: Clipboard },
@@ -45,7 +46,7 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }: { mo
       <div className="border-b border-slate-800 p-4 xl:p-6">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/20 text-lg font-semibold text-sky-300">
-            CP
+            SP
           </div>
           <div className={`${mobile ? 'block' : 'hidden xl:block'} min-w-0`}>
             <h1 className="text-lg font-semibold tracking-tight">SohojPrescription</h1>

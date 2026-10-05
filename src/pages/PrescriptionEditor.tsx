@@ -4,12 +4,20 @@ import { Link, useLocation } from 'react-router-dom'
 import { Plus, Save, Stethoscope, Trash2, Zap } from 'lucide-react'
 import { createClientId, db } from '../services/db'
 import { Patient, PrescriptionItem } from '../types'
-import MedicineInput from '../components/MedicineInput'
 import SignaturePad from '../components/SignaturePad'
+import ClinicalTermPicker from '../components/ClinicalTermPicker'
 import { useAuth } from '../services/auth'
 import { filterTenantRecords } from '../services/tenant'
 import { buildPrescriptionPayload, getPrescriptionDraftStorageKey, normalizePrescriptionItems } from '../services/prescription'
 import { generatePrescriptionQrDataUrl } from '../services/prescriptionQr'
+import MedicineCatalogPicker from '../components/MedicineCatalogPicker'
+import {
+  ClinicPrescriptionTemplate,
+  ClinicalReferenceTerm,
+  deleteClinicPrescriptionTemplate,
+  listClinicPrescriptionTemplates,
+  saveClinicPrescriptionTemplate,
+} from '../services/clinicalCatalog'
 
 const clinicPresets = [
   { id: 'general', label: 'General practice', department: 'Family medicine', mark: 'GP' },
@@ -46,6 +54,10 @@ export default function PrescriptionEditor() {
   ])
   const [availablePatients, setAvailablePatients] = useState<Patient[]>([])
   const [notes, setNotes] = useState('')
+  const [chiefComplaint, setChiefComplaint] = useState('')
+  const [diagnosisName, setDiagnosisName] = useState('')
+  const [diagnosisCode, setDiagnosisCode] = useState('')
+  const [diagnosisSystem, setDiagnosisSystem] = useState('')
   const [patientName, setPatientName] = useState('')
   const [patientPhone, setPatientPhone] = useState('')
   const [doctorName, setDoctorName] = useState(user?.full_name || '')
@@ -73,17 +85,22 @@ export default function PrescriptionEditor() {
   const [saving, setSaving] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine)
-
-  const LOCAL_BRANDS = [
-    'Napa 500mg',
-    'Seclo 100mg',
-    'Paracetamol 500mg',
-    'Omeprazole 20mg',
-    'Amoxicillin 500mg',
-  ]
+  const [clinicTemplates, setClinicTemplates] = useState<ClinicPrescriptionTemplate[]>([])
+  const canManageTemplates = user !== null && !['pharmacist', 'pharmacy'].includes(user.role)
 
   useEffect(() => {
     setDoctorName(user?.full_name || '')
+  }, [user])
+
+  useEffect(() => {
+    let active = true
+    if (!user) return
+    listClinicPrescriptionTemplates(user)
+      .then((templates) => { if (active) setClinicTemplates(templates) })
+      .catch((error) => {
+        if (active) setStatusMessage(error instanceof Error ? error.message : 'Unable to load saved medicine instructions.')
+      })
+    return () => { active = false }
   }, [user])
 
   useEffect(() => {
@@ -152,6 +169,10 @@ export default function PrescriptionEditor() {
         setPatientName(draft.patientName || '')
         setItems(draft.items || items)
         setNotes(draft.notes || '')
+        setChiefComplaint(draft.chiefComplaint || '')
+        setDiagnosisName(draft.diagnosisName || '')
+        setDiagnosisCode(draft.diagnosisCode || '')
+        setDiagnosisSystem(draft.diagnosisSystem || '')
       }
     } catch (e) {
       // ignore
@@ -168,13 +189,13 @@ export default function PrescriptionEditor() {
     if (!draftStorageKey) return
 
     const id = setInterval(() => {
-      const draft = { patientName, items, notes, updatedAt: Date.now() }
+      const draft = { patientName, items, notes, chiefComplaint, diagnosisName, diagnosisCode, diagnosisSystem, updatedAt: Date.now() }
       localStorage.setItem(draftStorageKey, JSON.stringify(draft))
       setStatusMessage('Draft autosaved')
       setTimeout(() => setStatusMessage(null), 1200)
     }, 20000)
     return () => clearInterval(id)
-  }, [patientName, items, notes, draftStorageKey])
+  }, [patientName, items, notes, chiefComplaint, diagnosisName, diagnosisCode, diagnosisSystem, draftStorageKey])
 
   const addRow = () =>
     setItems((s) => [...s, { generic: '', brand: '', dose: '', frequency: '', duration: '', instructions: '' }])
@@ -205,6 +226,60 @@ export default function PrescriptionEditor() {
       copy[idx] = { ...copy[idx], ...partial }
       return copy
     })
+  }
+
+  const saveCurrentTemplate = async () => {
+    if (!user) return
+    const current = items[items.length - 1]
+    if (!current?.generic?.trim()) {
+      setStatusMessage('Enter a generic medicine name before saving a quick instruction.')
+      return
+    }
+    const title = window.prompt('Name this clinician-authored quick instruction')
+    if (!title?.trim()) return
+    try {
+      const template = await saveClinicPrescriptionTemplate(user, {
+        title,
+        medicineCatalogId: current.medicine_catalog_id,
+        genericName: current.generic,
+        brandName: current.brand,
+        strength: current.strength,
+        dosageForm: current.dosage_form,
+        dose: current.dose,
+        frequency: current.frequency,
+        duration: current.duration,
+        instructions: current.instructions,
+      })
+      setClinicTemplates((existing) => [...existing, template].sort((left, right) => left.title.localeCompare(right.title)))
+      setStatusMessage('Quick instruction saved for this clinic location. Review it before use each time.')
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : 'Unable to save quick instruction.')
+    }
+  }
+
+  const applyTemplate = (index: number, template: ClinicPrescriptionTemplate) => {
+    updateItem(index, {
+      medicine_catalog_id: template.medicine_catalog_id || undefined,
+      generic: template.generic_name,
+      brand: template.brand_name || '',
+      strength: template.strength || '',
+      dosage_form: template.dosage_form || '',
+      dose: template.dose || '',
+      frequency: template.frequency || '',
+      duration: template.duration || '',
+      instructions: template.instructions || '',
+    })
+  }
+
+  const removeTemplate = async (template: ClinicPrescriptionTemplate) => {
+    if (!user || !window.confirm(`Remove the “${template.title}” quick instruction from this clinic location?`)) return
+    try {
+      await deleteClinicPrescriptionTemplate(user, template.id)
+      setClinicTemplates((existing) => existing.filter((item) => item.id !== template.id))
+      setStatusMessage('Quick instruction removed.')
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : 'Unable to remove quick instruction.')
+    }
   }
 
   const validate = () => {
@@ -280,6 +355,10 @@ export default function PrescriptionEditor() {
           sub_tenant_id: user.sub_tenant_id,
           visit_type: 'walk-in',
           specialty: 'general',
+          chief_complaint: chiefComplaint.trim() || null,
+          diagnosis_name: diagnosisName.trim() || null,
+          diagnosis_code: diagnosisCode.trim() || null,
+          diagnosis_system: diagnosisSystem.trim() || null,
           status: 'done',
           created_at: new Date().toISOString(),
         },
@@ -302,7 +381,7 @@ export default function PrescriptionEditor() {
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-6">
       <div className="soft-card overflow-hidden">
-        <div className="border-b border-slate-200 bg-gradient-to-r from-sky-50 via-white to-emerald-50 p-6">
+        <div className="border-b border-slate-200 bg-gradient-to-r from-sky-50 via-white to-emerald-50 p-4 sm:p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-600 text-white shadow-sm">
@@ -413,6 +492,13 @@ export default function PrescriptionEditor() {
               </div>
             </div>
 
+            {(chiefComplaint.trim() || diagnosisName.trim()) && (
+              <div className="mt-4 grid gap-3 border-b border-slate-200 pb-4 sm:grid-cols-2">
+                {chiefComplaint.trim() && <div><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Chief complaint</p><p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{chiefComplaint}</p></div>}
+                {diagnosisName.trim() && <div><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Diagnosis</p><p className="mt-1 text-sm text-slate-800">{diagnosisName}{diagnosisCode ? ` (${diagnosisSystem ? `${diagnosisSystem} ` : ''}${diagnosisCode})` : ''}</p></div>}
+              </div>
+            )}
+
             <div className={`mt-5 ${isEmergency ? 'emergency-layout' : ''}`}>
               <div className="overflow-hidden rounded-2xl border border-slate-200">
                 <table className="w-full border-collapse text-left text-sm">
@@ -432,7 +518,7 @@ export default function PrescriptionEditor() {
                         <td className="px-3 py-3 font-medium text-slate-600">{idx + 1}</td>
                         <td className="px-3 py-3">
                           <div className="font-medium text-slate-800">{it.brand || it.generic || '—'}</div>
-                          <div className="text-slate-500">{it.generic || '—'}</div>
+                          <div className="text-slate-500">{it.generic || '—'}{it.strength ? ` · ${it.strength}` : ''}{it.dosage_form ? ` · ${it.dosage_form}` : ''}</div>
                         </td>
                         <td className="px-3 py-3 text-slate-700">{it.dose || '—'}</td>
                         <td className="px-3 py-3 text-slate-700">{it.frequency || '—'}</td>
@@ -623,30 +709,47 @@ export default function PrescriptionEditor() {
             </div>
           </fieldset>
 
+          <fieldset disabled={savedPrescriptionId !== null} className="no-print mb-6 grid gap-4 border-0 p-0 sm:grid-cols-2">
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <label className="field-label" htmlFor="chief-complaint">Chief complaint</label>
+              <input id="chief-complaint" className="field-input" value={chiefComplaint} onChange={(event) => setChiefComplaint(event.target.value)} maxLength={500} placeholder="Enter the patient's words or clinician summary" />
+              <div className="mt-3"><ClinicalTermPicker category="chief_complaint" onSelect={(term: ClinicalReferenceTerm) => setChiefComplaint(term.label_bn ? `${term.label_en} · ${term.label_bn}` : term.label_en)} /></div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <label className="field-label" htmlFor="diagnosis-name">Diagnosis (clinician entered)</label>
+              <input id="diagnosis-name" className="field-input" value={diagnosisName} onChange={(event) => { setDiagnosisName(event.target.value); setDiagnosisCode(''); setDiagnosisSystem('') }} maxLength={500} placeholder="Enter diagnosis; catalog lookup is optional" />
+              {diagnosisCode && <p className="mt-1 text-xs text-slate-500">Reference: {diagnosisSystem ? `${diagnosisSystem} ` : ''}{diagnosisCode}</p>}
+              <div className="mt-3"><ClinicalTermPicker category="disease" onSelect={(term: ClinicalReferenceTerm) => { setDiagnosisName(term.label_bn ? `${term.label_en} · ${term.label_bn}` : term.label_en); setDiagnosisCode(term.classification_code || ''); setDiagnosisSystem(term.classification_system || '') }} /></div>
+            </div>
+            <p className="text-xs text-slate-500 sm:col-span-2">Reference terms assist documentation only. They do not diagnose, recommend treatment, or replace clinician judgment.</p>
+          </fieldset>
+
           <fieldset disabled={savedPrescriptionId !== null} className="mb-6 min-w-0 border-0 p-0 no-print">
             <label className="field-label">Clinician signature</label>
             <SignaturePad value={signature} onChange={setSignature} disabled={savedPrescriptionId !== null} />
           </fieldset>
 
-          <fieldset disabled={savedPrescriptionId !== null} className="mb-6 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0 no-print">
-            {LOCAL_BRANDS.map((brand) => (
-              <button key={brand} type="button" className="chip" onClick={() => {
-                const next = brand.split(' ')
-                const generic = next.slice(0, -1).join(' ')
-                const suffix = next[next.length - 1] || ''
-                setItems((s) => {
-                  const copy = [...s]
-                  const target = copy[copy.length - 1] || { generic: '', brand: '', dose: '', frequency: '', duration: '', instructions: '' }
-                  copy[copy.length - 1] = { ...target, generic, brand, dose: suffix }
-                  return copy
-                })
-              }}>
-                {brand}
-              </button>
-            ))}
-          </fieldset>
-
           <fieldset disabled={savedPrescriptionId !== null} className="space-y-4 min-w-0 border-0 p-0 no-print">
+            {!!clinicTemplates.length && (
+              <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div><p className="text-sm font-semibold text-slate-800">Clinic quick instructions</p><p className="mt-0.5 text-xs text-slate-600">Clinician-authored shortcuts. Review and edit every field before prescribing.</p></div>
+                  {canManageTemplates && <button type="button" onClick={() => void saveCurrentTemplate()} className="action-button-secondary min-h-10">Save current row</button>}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">{clinicTemplates.map((template) => (
+                  <span key={template.id} className="inline-flex max-w-full items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+                    <button type="button" title={`Apply ${template.title} to medicine ${items.length}`} onClick={() => applyTemplate(items.length - 1, template)} className="min-h-10 max-w-56 truncate px-3 text-left text-sm text-slate-700 hover:bg-slate-50">{template.title}</button>
+                    {canManageTemplates && <button type="button" aria-label={`Remove ${template.title}`} onClick={() => void removeTemplate(template)} className="min-h-10 border-l border-slate-100 px-2 text-slate-400 hover:bg-rose-50 hover:text-rose-700">×</button>}
+                  </span>
+                ))}</div>
+              </div>
+            )}
+            {!clinicTemplates.length && user?.sub_tenant_id && canManageTemplates && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3">
+                <p className="text-xs text-slate-600">Save frequently used instructions for this clinic; they are never clinical recommendations.</p>
+                <button type="button" onClick={() => void saveCurrentTemplate()} className="action-button-secondary min-h-10">Save current row</button>
+              </div>
+            )}
             {items.map((it, idx) => (
               <div key={idx} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="mb-3 flex items-center justify-between gap-2">
@@ -658,7 +761,16 @@ export default function PrescriptionEditor() {
                   )}
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-8">
+                  <div className="md:col-span-2 xl:col-span-6">
+                    <MedicineCatalogPicker onSelect={(medicine) => updateItem(idx, {
+                      medicine_catalog_id: medicine.id,
+                      generic: medicine.generic_name,
+                      brand: medicine.brand_name || '',
+                      strength: medicine.strength || '',
+                      dosage_form: medicine.dosage_form || '',
+                    })} />
+                  </div>
                   <div className="xl:col-span-2">
                     <label className="field-label">Generic</label>
                     <input className="field-input" placeholder="Paracetamol" value={it.generic} onChange={(e) => updateItem(idx, { generic: e.target.value })} />
@@ -668,8 +780,16 @@ export default function PrescriptionEditor() {
                     <input className="field-input" placeholder="Napa" value={it.brand} onChange={(e) => updateItem(idx, { brand: e.target.value })} />
                   </div>
                   <div className="xl:col-span-1">
+                    <label className="field-label">Product strength</label>
+                    <input className="field-input" placeholder="e.g. 500 mg" value={it.strength || ''} onChange={(e) => updateItem(idx, { strength: e.target.value })} />
+                  </div>
+                  <div className="xl:col-span-1">
+                    <label className="field-label">Dosage form</label>
+                    <input className="field-input" placeholder="e.g. tablet" value={it.dosage_form || ''} onChange={(e) => updateItem(idx, { dosage_form: e.target.value })} />
+                  </div>
+                  <div className="xl:col-span-1">
                     <label className="field-label">Dose</label>
-                    <input className="field-input" placeholder="500mg" value={it.dose} onChange={(e) => updateItem(idx, { dose: e.target.value })} />
+                    <input className="field-input" placeholder="Clinician enters dose" value={it.dose} onChange={(e) => updateItem(idx, { dose: e.target.value })} />
                   </div>
                   <div className="xl:col-span-1">
                     <label className="field-label">Frequency</label>
@@ -679,7 +799,7 @@ export default function PrescriptionEditor() {
                     <label className="field-label">Duration</label>
                     <input className="field-input" placeholder="5 days" value={it.duration} onChange={(e) => updateItem(idx, { duration: e.target.value })} />
                   </div>
-                  <div className="xl:col-span-6">
+                  <div className="xl:col-span-8">
                     <label className="field-label">Instructions</label>
                     <textarea className="field-textarea" placeholder="After food, avoid missed dose" value={it.instructions} onChange={(e) => updateItem(idx, { instructions: e.target.value })} />
                   </div>
@@ -713,15 +833,6 @@ export default function PrescriptionEditor() {
           <fieldset disabled={savedPrescriptionId !== null} className="mt-4 min-w-0 border-0 p-0 no-print">
             <label className="field-label">Warnings / contraindications</label>
             <textarea className="field-textarea" rows={3} value={warnings} onChange={(e) => setWarnings(e.target.value)} placeholder="List drug warnings, contraindications, or caution" />
-          </fieldset>
-
-          <fieldset disabled={savedPrescriptionId !== null} className="mt-4 min-w-0 border-0 p-0 no-print">
-            <label className="field-label">Medicines (quick add)</label>
-            <MedicineInput
-              value={items.map((it) => ({ name: it.brand || it.generic || '' }))}
-              onChange={(m) => setItems(m.map((mm) => ({ generic: mm.name, brand: mm.name })) as any)}
-              suggestions={LOCAL_BRANDS}
-            />
           </fieldset>
 
           <p className="mt-4 text-xs text-slate-500 no-print">The drawn signature image is saved with this prescription; it is not a certificate-backed electronic signature.</p>

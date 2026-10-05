@@ -32,12 +32,41 @@ function requiredText(value: unknown, field: string) {
   return value.trim()
 }
 
+function optionalText(value: unknown, maxLength = 500) {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  if (normalized.length > maxLength) throw new Error(`Catalog field exceeds ${maxLength} characters.`)
+  return normalized || null
+}
+
+function stringList(value: unknown) {
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split('|')
+      : []
+  if (items.some((item) => typeof item !== 'string')) throw new Error('Search terms must be text.')
+  const normalized = items as string[]
+  if (normalized.length > 30) throw new Error('Use no more than 30 synonyms or search terms per row.')
+  return normalized
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function requiredCatalogText(value: unknown, field: string, maxLength: number) {
+  const normalized = requiredText(value, field)
+  if (normalized.length > maxLength) throw new Error(`${field} must be ${maxLength} characters or fewer.`)
+  return normalized
+}
+
 Deno.serve(async (request) => {
   if (request.headers.get('Origin') && request.headers.get('Origin') !== allowedOrigin) {
     return json({ error: 'Origin is not allowed.' }, 403)
   }
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405)
+  const contentLength = Number(request.headers.get('Content-Length') || 0)
+  if (contentLength > 600_000) return json({ error: 'Import batch is too large; use smaller CSV batches.' }, 413)
 
   try {
     const authorization = request.headers.get('Authorization')
@@ -75,6 +104,76 @@ Deno.serve(async (request) => {
     const tenantId = isPlatformOwner
       ? (typeof body.tenant_id === 'string' ? body.tenant_id.trim() : '')
       : actor.tenant_id
+
+    if (action === 'import_medicine_catalog' || action === 'import_clinical_terms') {
+      if (!isPlatformOwner) return json({ error: 'Platform owner access required.' }, 403)
+      if (!Array.isArray(body.records) || body.records.length < 1 || body.records.length > 250) {
+        return json({ error: 'Import 1 to 250 rows per request.' }, 400)
+      }
+      const sourceName = requiredCatalogText(body.source_name, 'Source name', 160)
+      const sourceUrl = requiredCatalogText(body.source_url, 'Source URL', 2048)
+      const sourceLicense = requiredCatalogText(body.source_license, 'Source license or permission', 300)
+      const sourceRevision = requiredCatalogText(body.source_revision, 'Source revision', 120)
+      const verifiedAt = requiredText(body.verified_at, 'Verification date')
+      try {
+        const url = new URL(sourceUrl)
+        if (url.protocol !== 'https:') throw new Error('Source URL must use HTTPS.')
+      } catch {
+        return json({ error: 'Enter a valid HTTPS source URL.' }, 400)
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(verifiedAt) || Number.isNaN(Date.parse(`${verifiedAt}T00:00:00Z`))) {
+        return json({ error: 'Verification date must use YYYY-MM-DD.' }, 400)
+      }
+
+      const records = body.records.map((value: unknown) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Every catalog row must be an object.')
+        const row = value as Record<string, unknown>
+        const provenance = {
+          source_name: sourceName,
+          source_url: sourceUrl,
+          source_license: sourceLicense,
+          source_revision: sourceRevision,
+          verified_at: verifiedAt,
+          updated_at: new Date().toISOString(),
+          is_active: true,
+        }
+        if (action === 'import_medicine_catalog') {
+          return {
+            ...provenance,
+            catalog_code: requiredCatalogText(row.catalog_code, 'Catalog code', 120),
+            generic_name: requiredCatalogText(row.generic_name, 'Generic name', 200),
+            brand_name: optionalText(row.brand_name, 160),
+            strength: optionalText(row.strength, 120),
+            dosage_form: optionalText(row.dosage_form, 120),
+            manufacturer: optionalText(row.manufacturer, 200),
+            registration_no: optionalText(row.registration_no, 120),
+            search_terms: stringList(row.search_terms),
+          }
+        }
+        const category = requiredText(row.category, 'Term category')
+        if (!['chief_complaint', 'disease'].includes(category)) throw new Error('Term category must be chief_complaint or disease.')
+        return {
+          ...provenance,
+          code: requiredCatalogText(row.code, 'Term code', 120),
+          category,
+          label_en: requiredCatalogText(row.label_en, 'English term', 200),
+          label_bn: optionalText(row.label_bn, 160),
+          synonyms: stringList(row.synonyms),
+          classification_system: optionalText(row.classification_system, 120),
+          classification_code: optionalText(row.classification_code, 120),
+        }
+      })
+      const identifiers = records.map((record) => {
+        const row = record as Record<string, unknown>
+        return action === 'import_medicine_catalog' ? row.catalog_code : row.code
+      })
+      if (new Set(identifiers).size !== identifiers.length) return json({ error: 'Each CSV batch must contain unique catalog codes.' }, 400)
+      const table = action === 'import_medicine_catalog' ? 'medicine_catalog' : 'clinical_reference_terms'
+      const conflictColumn = action === 'import_medicine_catalog' ? 'catalog_code' : 'code'
+      const { error: importError } = await adminClient.from(table).upsert(records, { onConflict: conflictColumn })
+      if (importError) throw importError
+      return json({ imported: records.length, catalog: table, source_revision: sourceRevision })
+    }
 
     if (action === 'list_tenants') {
       if (!isPlatformOwner) return json({ error: 'Platform owner access required.' }, 403)

@@ -36,6 +36,10 @@ export interface Visit {
   clinic_id?: string
   visit_type?: 'walk-in' | 'booked'
   specialty?: string | null
+  chief_complaint?: string | null
+  diagnosis_code?: string | null
+  diagnosis_name?: string | null
+  diagnosis_system?: string | null
   status?: 'waiting' | 'in-consult' | 'done' | 'cancelled'
   created_at?: string
 }
@@ -120,9 +124,12 @@ export interface PrescriptionPrintDetails {
 }
 
 export interface PrescriptionItem {
+  medicine_catalog_id?: string
   drug_id?: string
   brand?: string
   generic?: string
+  strength?: string
+  dosage_form?: string
   dose?: string
   frequency?: string
   duration?: string

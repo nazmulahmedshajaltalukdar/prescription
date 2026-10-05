@@ -23,7 +23,7 @@ Configure Supabase before entering real patient data.
   Invited staff use the `/set-password` URL; public clinic owners verify
   their email and return to `/login?verified=1`.
 4. Apply every SQL file in `supabase/migrations` in numeric order using the
-   Supabase SQL Editor (001 through 011). Confirm each finishes successfully
+   Supabase SQL Editor (001 through 012). Confirm each finishes successfully
    before moving to the next. Do not run only the newest migration on an empty
    project. Migration 003 explicitly grants the required authenticated API
    privileges because automatic table exposure is disabled; row-level access
@@ -46,6 +46,11 @@ Configure Supabase before entering real patient data.
    `website` source is staff-entered only; public self-service requests are
    not enabled. Offer/referral codes are recorded for follow-up and are not
    validated or applied as discounts.
+   Migration 012 adds shared provenance-tracked medicine and clinical-term
+   catalogs plus clinic-scoped prescription instruction templates. It does
+   not seed unverified catalog entries. Re-deploy `admin-management` after
+   this migration to enable platform-owner CSV imports; imports require source
+   URL, reuse license/permission, revision, and verification date.
 5. After the migrations complete, provision one trusted platform-owner Auth
    user by inserting its `public.profiles` row from the SQL Editor. Assign
    `platform_owner` only to this trusted account; the browser admin screen
