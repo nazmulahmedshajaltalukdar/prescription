@@ -48,8 +48,8 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }: { mo
             CP
           </div>
           <div className={`${mobile ? 'block' : 'hidden xl:block'} min-w-0`}>
-            <h1 className="text-lg font-semibold tracking-tight">Clinic Pulse</h1>
-            <p className="text-xs text-slate-400">Offline-first care</p>
+            <h1 className="text-lg font-semibold tracking-tight">SohojPrescription</h1>
+            <p className="text-xs text-slate-400">Clinic care, made simple</p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close navigation" className="ml-auto rounded-lg p-2 text-slate-300 hover:bg-slate-800 md:hidden"><X className="h-5 w-5" /></button>
         </div>

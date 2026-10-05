@@ -43,7 +43,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
       <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-lg">
         <div className="mb-6 text-center">
-          <h1 className="text-2xl font-semibold text-slate-900">Clinic Prescription</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">SohojPrescription</h1>
           <p className="mt-2 text-sm text-slate-500">Sign in to continue</p>
         </div>
 
